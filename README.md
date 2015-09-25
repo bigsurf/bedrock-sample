@@ -1,9 +1,10 @@
 
 #Architecture Design Document
 
-----------
+------------------------------
 
-
+## Overview:
+Building AWS cloud VPC that's HIPAA compliant and secure.
 
 ## Abstract:
 This architecture design document provides solutions for a scalable, elastic, redundant, high performance, secure, fault tolerant and recoverable architecture that enables organic growth.
