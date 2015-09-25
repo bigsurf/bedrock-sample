@@ -1,0 +1,965 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "VPC Infrastructure: VPC spanning 2 AZ's w/ public and private subnets, Security/Routing Rules, and NAT/VPN instances",
+    "Parameters": {
+        "EnvironmentName": {
+            "Description": "The name of the environment you are creating",
+            "Type": "String",
+            "AllowedPattern": "^(?!\\-)(?:[a-zA-Z\\d\\-]{0,62}[a-zA-Z\\d])$",
+            "ConstraintDescription": "must be an alphanumeric name (dashes are allowed, except as the first/last character)."
+        },
+        "KeyName": {
+            "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "ConstraintDescription": "must be the name of an existing EC2 KeyPair.",
+            "Default": "work-sample-keypair"
+        },
+        "VPCCIDRBlock": {
+            "Description": "Enter CIDR block for VPC",
+            "Type": "String",
+            "Default": "10.0.0.0/16",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+        },
+        "PublicSubnet1CIDRBlock": {
+            "Description": "Enter CIDR block for the Public Subnet in VPC",
+            "Type": "String",
+            "Default": "10.0.1.0/24",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+        },
+        "PrivateSubnet1CIDRBlock": {
+            "Description": "Enter CIDR block for the Private Subnet in VPC",
+            "Type": "String",
+            "Default": "10.0.2.0/24",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+        },
+        "PublicSubnet2CIDRBlock": {
+            "Description": "Enter CIDR block for the Public Subnet in VPC",
+            "Type": "String",
+            "Default": "10.0.3.0/24",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+        },
+        "PrivateSubnet2CIDRBlock": {
+            "Description": "Enter CIDR block for the Private Subnet in VPC",
+            "Type": "String",
+            "Default": "10.0.4.0/24",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+        },
+        "NATInstanceType": {
+            "Description": "Select instance type for NAT Host in Public Subnets",
+            "Type": "String",
+            "Default": "t2.micro"
+        },
+        "ExternalOpsAccess1": {
+            "Description": "Primary IP address range that can be used to SSH/RDP to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "162.44.245.0/24",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        },
+        "ExternalOpsAccess2": {
+            "Description": "Secondary IP address range that can be used to SSH/RDP to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "50.197.80.192/28",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        }
+    },
+     "Mappings": {
+        "RegionalAZs": {
+            "us-west-2": {
+                "AvailabilityZone1": "us-west-2a",
+                "AvailabilityZone2": "us-west-2b"
+            }
+        },
+        "RegionalAMIs": {
+            "us-east-1": {
+                "NAT": "ami-6e9e4b06",
+                "VPN": "ami-0e868466"
+            },
+            "us-west-1": {
+                "NAT": "ami-1d2b2958",
+                "VPN": "ami-cfa64a8b"
+            },
+            "us-west-2": {
+                "NAT": "ami-8b6912bb",
+                "VPN": "ami-01291e31"
+            },
+            "eu-west-1": {
+                "NAT": "ami-5b60b02c",
+                "VPN": "ami-811874f6"
+            },
+            "eu-central-1": {
+                "NAT": "ami-5b60b02c",
+                "VPN": "ami-be6659a3"
+            },
+            "ap-southeast-1": {
+                "NAT": "ami-d482da86",
+                "VPN": "ami-ce370b9c"
+            },
+            "ap-northeast-1": {
+                "NAT": "ami-49c29e48",
+                "VPN": "ami-d2cb0bd2"
+            },
+            "ap-southeast-2": {
+                "NAT": "ami-a164029b",
+                "VPN": "ami-a509759f"
+            },
+            "sa-east-1": {
+                "NAT": "ami-8b72db96",
+                "VPN": "ami-5d941040"
+            }
+        }
+    },
+    "Resources": {
+        "VPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "EnableDnsSupport": "true",
+                "EnableDnsHostnames": "true",
+                "CidrBlock": { "Ref": "VPCCIDRBlock" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "VPC us-west-2" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PublicSubnet1": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone1"
+                    ]
+                },
+                "CidrBlock": { "Ref": "PublicSubnet1CIDRBlock" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "Subnet-public-1" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "public"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PublicSubnet2": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone2"
+                    ]
+                },
+                "CidrBlock": { "Ref": "PublicSubnet2CIDRBlock" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "Subnet-public-2" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "public"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PrivateSubnet1": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone1"
+                    ]
+                },
+                "CidrBlock": { "Ref": "PrivateSubnet1CIDRBlock" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "Subnet-private-1" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "private"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PrivateSubnet2": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone2"
+                    ]
+                },
+                "CidrBlock": { "Ref": "PrivateSubnet2CIDRBlock" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "Subnet-private-2" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "private"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "DependsOn": "VPC",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "IGW" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "public"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "AttachInternetGateway": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "DependsOn": "InternetGateway",
+            "Properties": {
+                "InternetGatewayId": { "Ref": "InternetGateway" },
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+        "PublicRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "RT-public" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "public"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PrivateRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "RT-private" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "private"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PublicRoute": {
+            "Type": "AWS::EC2::Route",
+            "DependsOn": "AttachInternetGateway",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": { "Ref": "InternetGateway" },
+                "RouteTableId": { "Ref": "PublicRouteTable" }
+            }
+        },
+        "PrivateRoute": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "InstanceId": { "Ref": "NATInstance" },
+                "RouteTableId": { "Ref": "PrivateRouteTable" }
+            }
+        },
+        "PublicSubnet1RouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PublicSubnet1" },
+                "RouteTableId": { "Ref": "PublicRouteTable" }
+            }
+        },
+        "PrivateSubnet1RouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PrivateSubnet1" },
+                "RouteTableId": { "Ref": "PrivateRouteTable" }
+            }
+        },
+        "PublicSubnet2RouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PublicSubnet2" },
+                "RouteTableId": { "Ref": "PublicRouteTable" }
+            }
+        },
+        "PrivateSubnet2RouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PrivateSubnet2" },
+                "RouteTableId": { "Ref": "PrivateRouteTable" }
+            }
+        },
+        "PublicNetworkAcl": {
+            "Type": "AWS::EC2::NetworkAcl",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "ACL-public" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "public"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "PrivateNetworkAcl": {
+            "Type": "AWS::EC2::NetworkAcl",
+            "Properties": {
+                "VpcId": { "Ref": "VPC" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "ACL-private" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:network",
+                        "Value": "private"
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "InboundAllPublicNetworkAclEntry": {
+            "Type": "AWS::EC2::NetworkAclEntry",
+            "Properties": {
+                "NetworkAclId": { "Ref": "PublicNetworkAcl" },
+                "RuleNumber": "100",
+                "Protocol": "-1",
+                "RuleAction": "allow",
+                "Egress": "false",
+                "CidrBlock": "0.0.0.0/0",
+                "PortRange": {
+                    "From": "80",
+                    "To": "80"
+                }
+            }
+        },
+        "InboundAllPrivateNetworkAclEntry": {
+            "Type": "AWS::EC2::NetworkAclEntry",
+            "Properties": {
+                "NetworkAclId": { "Ref": "PrivateNetworkAcl" },
+                "RuleNumber": "103",
+                "Protocol": "-1",
+                "RuleAction": "allow",
+                "Egress": "false",
+                "CidrBlock": "0.0.0.0/0",
+                "PortRange": {
+                    "From": "0",
+                    "To": "65535"
+                }
+            }
+        },
+        "OutboundPublicNetworkAclEntry": {
+            "Type": "AWS::EC2::NetworkAclEntry",
+            "Properties": {
+                "NetworkAclId": { "Ref": "PublicNetworkAcl" },
+                "RuleNumber": "100",
+                "Protocol": "-1",
+                "RuleAction": "allow",
+                "Egress": "true",
+                "CidrBlock": "0.0.0.0/0",
+                "PortRange": {
+                    "From": "0",
+                    "To": "65535"
+                }
+            }
+        },
+        "OutboundPrivateNetworkAclEntry": {
+            "Type": "AWS::EC2::NetworkAclEntry",
+            "Properties": {
+                "NetworkAclId": { "Ref": "PrivateNetworkAcl" },
+                "RuleNumber": "100",
+                "Protocol": "-1",
+                "RuleAction": "allow",
+                "Egress": "true",
+                "CidrBlock": "0.0.0.0/0",
+                "PortRange": {
+                    "From": "0",
+                    "To": "65535"
+                }
+            }
+        },
+        "PublicSubnet1NetworkAclAssociation": {
+            "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PublicSubnet1" },
+                "NetworkAclId": { "Ref": "PublicNetworkAcl" }
+            }
+        },
+        "PrivateSubnet1NetworkAclAssociation": {
+            "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PrivateSubnet1" },
+                "NetworkAclId": { "Ref": "PrivateNetworkAcl" }
+            }
+        },
+        "PublicSubnet2NetworkAclAssociation": {
+            "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PublicSubnet2" },
+                "NetworkAclId": { "Ref": "PublicNetworkAcl" }
+            }
+        },
+        "PrivateSubnet2NetworkAclAssociation": {
+            "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+            "Properties": {
+                "SubnetId": { "Ref": "PrivateSubnet2" },
+                "NetworkAclId": { "Ref": "PrivateNetworkAcl" }
+            }
+        },
+        "SSHSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable incoming SSH access",
+                "VpcId": { "Ref": "VPC" },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": { "Ref": "ExternalOpsAccess1" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": { "Ref": "ExternalOpsAccess2" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "SG-SSH" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "RDPSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable incoming RDP access to an instance",
+                "VpcId": { "Ref": "VPC" },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "3389",
+                        "ToPort": "3389",
+                        "CidrIp": { "Ref": "ExternalOpsAccess1" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "3389",
+                        "ToPort": "3389",
+                        "CidrIp": { "Ref": "ExternalOpsAccess2" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "3389",
+                        "ToPort": "3389",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "SG-RDP" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "NATSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable incoming and outgoing HTTP/HTTPS for NAT",
+                "VpcId": { "Ref": "VPC" },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "80",
+                        "ToPort": "80",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "443",
+                        "ToPort": "443",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    },
+                    {
+                        "IpProtocol": "icmp",
+                        "FromPort": "-1",
+                        "ToPort": "-1",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "80",
+                        "ToPort": "80",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "443",
+                        "ToPort": "443",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "icmp",
+                        "FromPort": "-1",
+                        "ToPort": "-1",
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "SG-NAT" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },        
+        "VPNSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable incoming access to the OpenVPN instance",
+                "VpcId": { "Ref": "VPC" },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "443",
+                        "ToPort": "443",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "udp",
+                        "FromPort": "1194",
+                        "ToPort": "1194",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "943",
+                        "ToPort": "943",
+                        "CidrIp": { "Ref": "ExternalOpsAccess1" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "943",
+                        "ToPort": "943",
+                        "CidrIp": { "Ref": "ExternalOpsAccess2" }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "943",
+                        "ToPort": "943",
+                        "CidrIp": { "Ref": "VPCCIDRBlock" }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "SG-VPN" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ]
+            }
+        },
+        "NATInstance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone1"
+                    ]
+                },
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "RegionalAMIs",
+                        { "Ref": "AWS::Region" },
+                        "NAT"
+                    ]
+                },
+                "InstanceInitiatedShutdownBehavior": "stop",
+                "InstanceType": { "Ref": "NATInstanceType" },
+                "DisableApiTermination": "false",
+                "SourceDestCheck": "false",
+                "KeyName": { "Ref": "KeyName" },
+                "Monitoring": "false",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "NAT" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ],
+                "NetworkInterfaces": [
+                    {
+                        "DeleteOnTermination": "true",
+                        "Description": "Primary network interface",
+                        "DeviceIndex": 0,
+                        "SubnetId": { "Ref": "PublicSubnet1" },
+                        "GroupSet": [
+                            { "Ref": "NATSecurityGroup" },
+                            { "Ref": "SSHSecurityGroup" }
+                        ],
+                        "AssociatePublicIpAddress": "true"
+                    }
+                ]
+            }
+        },
+        "EIPforNATInstance": {
+            "Type": "AWS::EC2::EIP",
+            "DependsOn": [ "NATInstance", "AttachInternetGateway" ],
+            "Properties": {
+                "InstanceId": { "Ref": "NATInstance" },
+                "Domain": "vpc"
+            }
+        },
+        "VPNInstance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::FindInMap": [
+                        "RegionalAZs",
+                        { "Ref": "AWS::Region" },
+                        "AvailabilityZone1"
+                    ]
+                },
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "RegionalAMIs",
+                        { "Ref": "AWS::Region" },
+                        "VPN"
+                    ]
+                },
+                "InstanceInitiatedShutdownBehavior": "stop",
+                "InstanceType": { "Ref": "NATInstanceType" },
+                "DisableApiTermination": "false",
+                "SourceDestCheck": "false",
+                "KeyName": { "Ref": "KeyName" },
+                "Monitoring": "false",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [{ "Ref": "EnvironmentName" }, "VPN" ]
+                            ]
+                        }
+                    },
+                    {
+                        "Key": "x:environment",
+                        "Value": { "Ref": "EnvironmentName" }
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "sample"
+                    }
+                ],
+                "NetworkInterfaces": [
+                    {
+                        "DeleteOnTermination": "true",
+                        "Description": "Primary network interface",
+                        "DeviceIndex": 0,
+                        "SubnetId": { "Ref": "PublicSubnet1" },
+                        "GroupSet": [
+                            { "Ref": "VPNSecurityGroup" },
+                            { "Ref": "SSHSecurityGroup" }
+                        ],
+                        "AssociatePublicIpAddress": "true"
+                    }
+                ]
+            }
+        },
+        "EIPforVPNInstance": {
+            "Type": "AWS::EC2::EIP",
+            "DependsOn": [ "VPNInstance", "AttachInternetGateway" ],
+            "Properties": {
+                "InstanceId": { "Ref": "VPNInstance" },
+                "Domain": "vpc"
+            }
+        }
+    },
+    "Outputs": {
+        "VpcId": {
+            "Description": "VpcId of the newly created VPC",
+            "Value": { "Ref": "VPC" }
+        },
+        "NATPublicIP": {
+            "Description": "Public IP of the NAT/Bastion instance",
+            "Value": { "Fn::GetAtt": [ "NATInstance", "PublicIp" ] }
+        },
+        "VPNPublicIP": {
+            "Description": "Public IP of the VPN instance",
+            "Value": { "Fn::GetAtt": [ "VPNInstance", "PublicIp" ] }
+        },
+        "PublicSubnet1": {
+            "Description": "SubnetId of the primary public subnet",
+            "Value": { "Ref": "PublicSubnet1" }
+        },
+        "PrivateSubnet1": {
+            "Description": "SubnetId of the primary private subnet",
+            "Value": { "Ref": "PrivateSubnet1" }
+        },
+        "PublicSubnet2": {
+            "Description": "SubnetId of the secondary public subnet",
+            "Value": { "Ref": "PublicSubnet2" }
+        },
+        "PrivateSubnet2": {
+            "Description": "SubnetId of the secondary private subnet",
+            "Value": { "Ref": "PrivateSubnet2" }
+        },
+        "SSHSecurityGroup": {
+            "Description": "SecurityGroupId for allowing remote SSH Access",
+            "Value": { "Ref": "SSHSecurityGroup" }
+        },
+        "RDPSecurityGroup": {
+            "Description": "SecurityGroupId for allowing RDP Access",
+            "Value": { "Ref": "RDPSecurityGroup" }
+        }
+    }
+}

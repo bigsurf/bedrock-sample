@@ -1,0 +1,35 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Setup S3 Bucket for all transient storage",
+
+    "Resources": {
+        "NPS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": "work-sample-s3-store",
+                "AccessControl": "Private",
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "work-sample-store-s3"
+                    },
+                    {
+                        "Key": "x:appid",
+                        "Value": "Sample"
+                    }
+                ]
+            }
+        }
+
+    },
+    "Outputs": {
+        "BucketName": {
+            "Value": { "Ref": "NPS3Bucket" },
+            "Description": "Name of the S3 data holder Bucket"
+        },
+        "S3BucketSecureURL": {
+            "Value": { "Fn::Join": [ "", [ "https://", { "Fn::GetAtt": [ "NPS3Bucket", "DomainName" ] } ] ] },
+            "Description": "Name of S3 bucket to hold content"
+        }
+    }
+}
